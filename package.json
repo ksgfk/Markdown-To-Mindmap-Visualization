@@ -16,7 +16,11 @@
     "@antv/g": "^6.1.7",
     "@antv/g6": "^5.0.30",
     "@umijs/max": "^4.3.31",
-    "antd": "^5.4.0"
+    "antd": "^5.4.0",
+    "markmap-common": "^0.17.1",
+    "markmap-lib": "^0.17.2",
+    "markmap-toolbar": "^0.17.2",
+    "vditor": "^3.10.7"
   },
   "devDependencies": {
     "@types/react": "^18.0.33",

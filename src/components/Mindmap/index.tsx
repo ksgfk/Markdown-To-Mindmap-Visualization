@@ -1,4 +1,4 @@
-import { InboxOutlined } from '@ant-design/icons';
+import { DeleteOutlined, DownloadOutlined, ExclamationCircleFilled, InboxOutlined, MinusOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import {
   EventListenerOrEventListenerObject,
   EventTarget,
@@ -27,16 +27,16 @@ import {
   treeToGraphData,
 } from '@antv/g6';
 import { NodeStyle } from '@antv/g6/lib/spec/element/node';
-import { Button, Upload } from 'antd';
-import { useEffect, useRef, useState } from 'react';
-const { Dragger } = Upload;
+import { Button, Divider, Modal, Upload, message } from 'antd';
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 
 // 可用 easing https://github.com/antvis/G/blob/dd3e8f2105db316903de34c7f2b982babdb1c60a/packages/g-web-animations-api/src/utils/custom-easing.ts#L183
+// easing 函数可视化 https://easings.net/zh-cn
 const globalAnim: Record<AnimationStage, false | string | AnimationOptions[]> =
-  {
-    expand: [{ fields: ['x', 'y'], easing: 'out-quart' }],
-    collapse: [{ fields: ['x', 'y'], easing: 'out-quart' }],
-  };
+{
+  expand: [{ fields: ['x', 'y'], easing: 'out-quart' }],
+  collapse: [{ fields: ['x', 'y'], easing: 'out-quart' }],
+};
 
 const RootNodeStyle: NodeStyle = {
   fill: '#FFFFFF',
@@ -188,28 +188,63 @@ class MindmapNode extends BaseNode {
 
 register(ExtensionCategory.NODE, 'mindmap', MindmapNode);
 
-interface ReactMindmapProps {
+export interface EduMindmapProps {
   mindJson?: string;
   isReadonly: boolean;
+  exportName?: string;
 }
 
-export default (props: ReactMindmapProps) => {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [g6, setG6] = useState<Graph | null>(null);
-  const [mindData, setMindData] = useState<string | null>(
-    props.mindJson ?? null,
-  );
-  const [zoom, setZoomData] = useState<number>(0);
+export interface IEduMindmap {
+  serializeMindmapData: () => string | undefined;
+}
 
-  const parseMindJson = (jsonStr: string) => {
-    const data = JSON.parse(jsonStr);
-    if (data === null || typeof data !== 'object') {
-      throw new Error('invalid json');
-    }
-    if (!data.verts || !data.edges) {
-      throw new Error("invalid json schema, need 'verts' and 'edges'");
-    }
-    {
+export interface EduMindmapVertex {
+  id: string,
+  str: string | undefined
+}
+
+type EduMindmapG6Data = Omit<EduMindmapVertex, 'id'>;
+
+export interface EduMindmapEdge {
+  from: string,
+  to: string
+}
+
+export interface EduMindmapGraph {
+  verts: EduMindmapVertex[],
+  edges: EduMindmapEdge[]
+}
+
+export const EduMindmap = forwardRef<IEduMindmap, EduMindmapProps>((props: EduMindmapProps, ref) => {
+  const rightBottomBtnStyle = {
+    border: "none",
+    padding: "4px 10px",
+    color: "#606266",
+    boxShadow: "none"
+  };
+  const rightTopBtnStyle = {
+    marginLeft: "8px"
+  };
+
+  const downloadJson = (jsonStr: string, filename: string) => {
+    const blob = new Blob([jsonStr], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const convertMindmapData = (data: EduMindmapGraph, isVerify?: boolean) => {
+    if (isVerify) {
+      if (data === null || typeof data !== 'object') {
+        throw new Error('invalid json');
+      }
+      if (!data.verts || !data.edges) {
+        throw new Error("invalid json schema, need 'verts' and 'edges'");
+      }
       const ids = new Set<string>();
       for (const i of data.verts) {
         if (ids.has(i.id)) {
@@ -225,10 +260,11 @@ export default (props: ReactMindmapProps) => {
     }
     const treeData: TreeData[] = [];
     for (const i of data.verts) {
+      const data: EduMindmapG6Data = { ...i }; // :)
       treeData.push({
         id: i.id,
         children: [],
-        data: { ...i },
+        data,
         parent: [],
       });
     }
@@ -238,9 +274,11 @@ export default (props: ReactMindmapProps) => {
       from.children!.push(to);
       to.parent.push(from);
     }
-    for (const i of treeData) {
-      if (i.parent.length > 1) {
-        throw new Error(`tree node cannot has more than one parent ${i.id}`);
+    if (isVerify) {
+      for (const i of treeData) {
+        if (i.parent.length > 1) {
+          throw new Error(`tree node cannot has more than one parent ${i.id}`);
+        }
       }
     }
     const root: TreeData[] = [];
@@ -249,13 +287,45 @@ export default (props: ReactMindmapProps) => {
         root.push(i);
       }
     }
-    if (root.length <= 0 || root.length > 1) {
-      throw new Error(
-        `more than one root, roots id=${root.map((x) => x.id).join(',')}`,
-      );
+    if (isVerify) {
+      if (root.length <= 0) {
+        throw new Error('must have one root');
+      }
+      if (root.length > 1) {
+        throw new Error(
+          `more than one root, roots id=${root.map((x) => x.id).join(',')}`,
+        );
+      }
     }
-    return { graphData: treeToGraphData(root[0]), rootId: root[0].id };
+    return root[0];
+  }
+
+  const deserializeMindmapData = (jsonStr: string) => {
+    const initMindData: EduMindmapGraph | null = JSON.parse(jsonStr);
+    const root = convertMindmapData(initMindData!, true);
+    const graph = treeToGraphData(root);
+    return { graph, rootId: root.id };
   };
+
+  let initMindData: GraphData | null = null;
+  let initRootId: string | null = null;
+  if (props.mindJson) {
+    try {
+      const { graph, rootId } = deserializeMindmapData(props.mindJson);
+      initMindData = graph;
+      initRootId = rootId;
+    } catch (error) {
+      console.error(error);
+      message.error("无效的知识图谱数据");
+    }
+  }
+
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [g6, setG6] = useState<Graph | null>(null);
+  const [mindData, setMindData] = useState<GraphData | null>(initMindData);
+  const [rootIdData, setRootIdData] = useState<string | null>(initRootId);
+  const [zoom, setZoomData] = useState<number>(0);
+  const [isDeleteModal, setIsDeleteModal] = useState(false);
 
   const newGraph = (graphData: GraphData, rootId: string) => {
     const g = new Graph({
@@ -313,6 +383,7 @@ export default (props: ReactMindmapProps) => {
           onFinish: () => {
             setZoomData(g.getZoom());
           },
+          trigger: ['Control'],
         },
         'drag-canvas',
       ],
@@ -323,6 +394,36 @@ export default (props: ReactMindmapProps) => {
     return g;
   };
 
+  const serializeMindmapData = () => {
+    if (g6 === null) {
+      return undefined;
+    }
+    const g = g6.getData();
+    const result: EduMindmapGraph = {
+      verts: [],
+      edges: [],
+    };
+    for (const i of g.nodes) {
+      result.verts.push({
+        id: i.id,
+        ...(i.data as unknown as EduMindmapG6Data)
+      });
+    }
+    for (const i of g.edges) {
+      result.edges.push({
+        from: i.source,
+        to: i.target
+      });
+    }
+    return JSON.stringify(result);
+  }
+
+  useImperativeHandle(ref, () => {
+    return {
+      serializeMindmapData
+    }
+  });
+
   // useEffect 第二个参数不填东西, 表示该side effect无依赖, 因此只在dom加载后执行一次 (这不就是 unity 生命周期 start 函数嘛
   // 当 effect 有依赖时, 依赖发生变化后都会调用一次刷新side effect
   useEffect(() => {
@@ -332,23 +433,13 @@ export default (props: ReactMindmapProps) => {
         setG6(null);
       }
     } else {
-      let graphData: GraphData | null = null;
-      let rootId: string | null = null;
-      try {
-        const result = parseMindJson(mindData);
-        graphData = result.graphData;
-        rootId = result.rootId;
-      } catch (error) {
-        console.error(error);
-        return;
-      }
       if (g6) {
-        g6.setData(graphData);
+        g6.setData(mindData);
         g6.render()
           .then(() => g6.fitView())
           .then(() => setZoomData(g6.getZoom()));
       } else {
-        const newG = newGraph(graphData, rootId);
+        const newG = newGraph(mindData, rootIdData!);
         newG
           .render()
           .then(() => newG.fitView())
@@ -358,7 +449,7 @@ export default (props: ReactMindmapProps) => {
     }
   }, [mindData]);
 
-  return (
+  return <>
     <div
       style={{
         display: 'flex',
@@ -369,40 +460,52 @@ export default (props: ReactMindmapProps) => {
         position: 'relative',
       }}
     >
-      {!props.isReadonly && !mindData && (
-        <Dragger
-          style={{
-            display: mindData === null ? 'block' : 'none',
-          }}
-          name="file"
-          multiple={false}
-          showUploadList={false}
-          accept=".json"
-          beforeUpload={(file) => {
-            file.text().then((text) => {
-              setMindData(text);
-            });
-          }}
-        >
-          <p className="ant-upload-drag-icon">
-            <InboxOutlined />
-          </p>
-          <p className="ant-upload-text">
-            Click or drag file to this area to upload
-          </p>
-          <p className="ant-upload-hint">
-            Support for a single or bulk upload. Strictly prohibited from
-            uploading company data or other banned files.
-          </p>
-        </Dragger>
-      )}
+      {!props.isReadonly && !mindData && <>
+        <div style={{
+          width: '100%',
+          height: '100%',
+        }}>
+          <Upload.Dragger
+            style={{
+              width: '100%',
+              height: '100%',
+            }}
+            name="file"
+            multiple={false}
+            showUploadList={false}
+            accept=".json"
+            beforeUpload={(file) => {
+              file.text().then((text) => {
+                try {
+                  const { graph, rootId } = deserializeMindmapData(text);
+                  setMindData(graph);
+                  setRootIdData(rootId);
+                } catch (error) {
+                  console.error(error);
+                  message.error("无效的知识图谱数据");
+                  return;
+                }
+              });
+            }}
+          >
+            <p className="ant-upload-drag-icon">
+              <InboxOutlined />
+            </p>
+            <p className="ant-upload-text">
+              单击或拖动文件到此区域进行上传
+            </p>
+            <p className="ant-upload-hint">
+              需要上传格式为 json 的文件
+            </p>
+          </Upload.Dragger>
+        </div>
+      </>}
       {mindData && (
         <div
           ref={containerRef}
           style={{
             width: '100%',
             height: '100%',
-            display: mindData !== null ? 'block' : 'none',
           }}
         />
       )}
@@ -413,47 +516,100 @@ export default (props: ReactMindmapProps) => {
             right: 0,
           }}
         >
-          {!props.isReadonly && (
+          {!props.isReadonly && <>
             <Button
+              style={rightTopBtnStyle}
               onClick={() => {
-                setMindData(null);
+                setIsDeleteModal(true);
               }}
             >
-              删除
+              <DeleteOutlined />删除
             </Button>
-          )}
+            <Button
+              style={rightTopBtnStyle}
+              onClick={() => {
+                const str = serializeMindmapData();
+                if (str === undefined) {
+                  message.error("无效的知识图谱数据");
+                  return;
+                }
+                downloadJson(str, props.exportName ?? "知识图谱.json");
+              }}
+            >
+              <DownloadOutlined />导出
+            </Button>
+          </>}
         </div>
       )}
-      <div
-        style={{
-          position: 'absolute',
-          right: 0,
-          bottom: 0,
-        }}
-      >
-        <Button
-          onClick={() => {
-            g6?.fitCenter();
+      {mindData && <>
+        <div
+          style={{
+            position: 'absolute',
+            right: 0,
+            bottom: 0,
+            outline: '1px solid #E4E7ED',
+            borderRadius: '4px',
+            display: "flex",
+            alignItems: "center"
           }}
         >
-          C
-        </Button>
-        <Button
-          onClick={() => {
-            g6?.zoomBy(0.8).then(() => setZoomData(g6?.getZoom()));
-          }}
-        >
-          -
-        </Button>
-        {(zoom * 100).toFixed(0)}%
-        <Button
-          onClick={() => {
-            g6?.zoomBy(1.2).then(() => setZoomData(g6?.getZoom()));
-          }}
-        >
-          +
-        </Button>
-      </div>
+          <Button
+            style={rightBottomBtnStyle}
+            onClick={() => {
+              g6?.fitCenter();
+            }}
+          >
+            <ReloadOutlined />
+          </Button>
+          <Divider
+            type="vertical"
+            style={{
+              color: "#E4E7ED",
+              top: "0",
+              height: "1.6em",
+              marginInline: "2px"
+            }}
+          />
+          <Button
+            style={rightBottomBtnStyle}
+            onClick={() => {
+              g6?.zoomBy(0.8).then(() => setZoomData(g6?.getZoom()));
+            }}
+          >
+            <MinusOutlined />
+          </Button>
+          <div
+            style={{
+              width: "50px",
+              textAlign: "center"
+            }}>
+            {(zoom * 100).toFixed(0)}%
+          </div>
+          <Button
+            style={rightBottomBtnStyle}
+            onClick={() => {
+              g6?.zoomBy(1.2).then(() => setZoomData(g6?.getZoom()));
+            }}
+          >
+            <PlusOutlined />
+          </Button>
+        </div>
+      </>}
     </div>
-  );
-};
+    <Modal
+      title={<><ExclamationCircleFilled /> 确认</>}
+      open={isDeleteModal}
+      onOk={() => {
+        setMindData(null);
+        setRootIdData(null);
+        setIsDeleteModal(false);
+      }}
+      onCancel={() => {
+        setIsDeleteModal(false);
+      }}
+      okText="确认"
+      cancelText="取消">
+      真的要删除知识图谱吗？
+    </Modal>
+  </>;
+});
