@@ -468,10 +468,7 @@ export const EduMindmap = forwardRef<IEduMindmap, EduMindmapProps>((props: EduMi
   }, []);
 
   useEffect(() => {
-    if (mindData === null) {
-      g6?.setData({ nodes: [], edges: [] });
-      g6?.render();
-    } else {
+    if (mindData !== null) {
       g6?.setData(mindData);
       g6?.render()
         .then(() => g6.fitView())
@@ -507,6 +504,7 @@ export const EduMindmap = forwardRef<IEduMindmap, EduMindmapProps>((props: EduMi
             style={{
               width: '100%',
               height: '100%',
+              backgroundColor: "#ffffff"
             }}
             name="file"
             multiple={false}

@@ -1,9 +1,11 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { EduMindmap, EduMindmapGraph, IEduMindmap } from '../../components/Mindmap';
-import Vditor from 'vditor';
-import "vditor/src/assets/less/index.less";
 import { Transformer } from 'markmap-lib';
 import { IPureNode } from 'markmap-common';
+import { basicSetup, EditorView } from "codemirror"
+import { markdown } from '@codemirror/lang-markdown';
+import { languages } from '@codemirror/language-data';
+import { Button } from 'antd';
 
 interface InputState {
   timeout: number | null
@@ -15,9 +17,25 @@ interface ConvertNode {
   id: number;
 }
 
+const removeHtmlTags = (str: string) => {
+  return str.replace(/<\/?[^>]+(>|$)/g, "");
+};
+
 export default () => {
+  const downloadMarkdown = (str: string, filename: string) => {
+    const blob = new Blob([str], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+
   const editorRef = useRef<HTMLDivElement>(null);
   const mindmapRef = useRef<IEduMindmap>(null);
+  const [editorView, setEditorView] = useState<EditorView | null>(null);
 
   const inputState: InputState = {
     timeout: null
@@ -50,7 +68,7 @@ export default () => {
     }
     const graph: EduMindmapGraph = { verts: [], edges: [] };
     for (const i of flat) {
-      graph.verts.push({ id: i.id.toString(), str: isNullOrWhiteSpace(i.data.content) ? undefined : i.data.content });
+      graph.verts.push({ id: i.id.toString(), str: isNullOrWhiteSpace(i.data.content) ? undefined : removeHtmlTags(i.data.content.trim()) });
       if (i.parent) {
         graph.edges.push({ from: i.parent.id.toString(), to: i.id.toString() });
       }
@@ -60,34 +78,30 @@ export default () => {
   };
 
   useEffect(() => {
-    const vditor = new Vditor(editorRef.current!, {
-      height: "94vh",
-      width: "50%",
-      typewriterMode: true,
-      placeholder: '# 你好',
-      cache: {
-        enable: false,
-      },
-      toolbarConfig: {
-        pin: true,
-      },
-      preview: {
-        mode: 'both',
-      },
-      mode: "sv",
-      input: (value: string) => {
-        if (inputState.timeout !== null) {
-          window.clearTimeout(inputState.timeout);
-        }
-        inputState.timeout = window.setTimeout(() => {
-          updateMinmap(value);
-        }, 750);
-      }
-    });
+    const view = new EditorView({
+      doc: "# 你好",
+      extensions: [
+        basicSetup,
+        markdown({ codeLanguages: languages }),
+        EditorView.updateListener.of((update) => {
+          if (update.docChanged) {
+            if (inputState.timeout !== null) {
+              window.clearTimeout(inputState.timeout);
+            }
+            inputState.timeout = window.setTimeout(() => {
+              const str = update.state.doc.toString();
+              updateMinmap(str);
+            }, 750);
+          }
+        })
+      ],
+      parent: editorRef.current!,
+    })
+    setEditorView(view);
     return () => {
-      vditor.destroy();
-    };
-  });
+      view.destroy();
+    }
+  }, []);
 
   return <>
     <div
@@ -96,7 +110,37 @@ export default () => {
         flexDirection: "row"
       }}
     >
-      <div ref={editorRef} />
+      <div
+        style={{
+          width: "50%",
+          height: '94vh',
+          border: '1px solid #e8e8e8',
+          overflow: "clip"
+        }}
+      >
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'flex-end'
+          }}>
+          <Button
+            onClick={() => {
+              const str = editorView?.state.doc.toString() ?? "";
+              const t = editorView?.state.doc.lineAt(0).text ?? "新建文档";
+              downloadMarkdown(str, `${t}.md`);
+            }}>
+            保存
+          </Button>
+        </div>
+        <div
+          ref={editorRef}
+          style={{
+            height: "100%",
+            border: '1px solid #e8e8e8',
+            overflow: "scroll"
+          }}
+        />
+      </div>
       <div
         style={{
           width: "50%",
