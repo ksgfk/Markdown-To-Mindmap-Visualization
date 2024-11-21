@@ -30,7 +30,7 @@ export default () => {
   const updateMinmap = (value: string) => {
     const transformer = new Transformer();
     const result = transformer.transform(value);
-    if (isNullOrWhiteSpace(result.root.content)) {
+    if (isNullOrWhiteSpace(result.root.content) && result.root.children.length === 0) {
       return;
     }
     const flat: ConvertNode[] = [];
@@ -55,9 +55,8 @@ export default () => {
         graph.edges.push({ from: i.parent.id.toString(), to: i.id.toString() });
       }
     }
-    const mindJson = JSON.stringify(graph, undefined, 2);
-    console.log(mindJson);
-    // mindmapRef.current!.setMindStringJson(mindJson);
+    const mindJson = JSON.stringify(graph);
+    mindmapRef.current!.setMindStringJson(mindJson);
   };
 
   useEffect(() => {
@@ -109,7 +108,7 @@ export default () => {
       >
         <EduMindmap
           ref={mindmapRef}
-          isReadonly={true}
+          isReadonly={false}
           mindJson={`{"verts": [{"id": "1","str": "你好"}],"edges": []}`}
         />
       </div>

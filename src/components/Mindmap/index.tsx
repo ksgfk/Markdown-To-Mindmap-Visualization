@@ -196,6 +196,7 @@ export interface EduMindmapProps {
 
 export interface IEduMindmap {
   serializeMindmapData: () => string | undefined;
+  setMindStringJson: (json: string) => void;
 }
 
 export interface EduMindmapVertex {
@@ -322,24 +323,29 @@ export const EduMindmap = forwardRef<IEduMindmap, EduMindmapProps>((props: EduMi
 
   const containerRef = useRef<HTMLDivElement>(null);
   const [g6, setG6] = useState<Graph | null>(null);
+  const [resizeOb, setResizeOb] = useState<ResizeObserver | null>(null);
   const [mindData, setMindData] = useState<GraphData | null>(initMindData);
   const [rootIdData, setRootIdData] = useState<string | null>(initRootId);
+  const rootIdDataRef = useRef(rootIdData); // 乐 :)
+  useEffect(() => {
+    rootIdDataRef.current = rootIdData
+  }, [rootIdData]);
   const [zoom, setZoomData] = useState<number>(0);
   const [isDeleteModal, setIsDeleteModal] = useState(false);
 
-  const newGraph = (graphData: GraphData, rootId: string) => {
+  const newGraph = (graphData: GraphData | undefined) => {
     const g = new Graph({
       container: containerRef.current!,
       data: graphData,
       node: {
         type: 'mindmap',
-        style: function (d: NodeData): NodeStyle {
+        style: (d: NodeData): NodeStyle => {
           const labelText = (d.data?.str as string) ?? idOf(d);
           const direction = getNodeSide(
             d,
-            this.getParentData(idOf(d), 'tree')!,
+            g.getParentData(idOf(d), 'tree')!,
           );
-          const isRoot = idOf(d) === rootId;
+          const isRoot = idOf(d) === rootIdDataRef.current;
           return {
             direction,
             labelText: labelText,
@@ -364,12 +370,12 @@ export const EduMindmap = forwardRef<IEduMindmap, EduMindmapProps>((props: EduMi
         getWidth: (node: NodeLikeData) =>
           getNodeSize(
             (node.data?.str as string) ?? idOf(node),
-            node.id === rootId,
+            node.id === rootIdDataRef.current,
           )[0],
         getHeight: (node: NodeLikeData) =>
           getNodeSize(
             (node.data?.str as string) ?? idOf(node),
-            node.id === rootId,
+            node.id === rootIdDataRef.current,
           )[1],
         getVGap: () => 6,
         getHGap: () => 30,
@@ -418,34 +424,58 @@ export const EduMindmap = forwardRef<IEduMindmap, EduMindmapProps>((props: EduMi
     return JSON.stringify(result);
   }
 
-  useImperativeHandle(ref, () => {
-    return {
-      serializeMindmapData
+  const setMindStringJson = (json: string) => {
+    try {
+      const { graph, rootId } = deserializeMindmapData(json);
+      setRootIdData(rootId);
+      setMindData(graph);
+    } catch (error) {
+      console.error(error);
+      message.error("无效的知识图谱数据");
     }
-  });
+  }
+
+  useImperativeHandle(ref, () => (
+    {
+      serializeMindmapData,
+      setMindStringJson
+    }
+  ));
 
   // useEffect 第二个参数不填东西, 表示该side effect无依赖, 因此只在dom加载后执行一次 (这不就是 unity 生命周期 start 函数嘛
   // 当 effect 有依赖时, 依赖发生变化后都会调用一次刷新side effect
   useEffect(() => {
+    const newG = newGraph(mindData ?? undefined);
+    newG.render()
+      .then(() => newG.fitView())
+      .then(() => setZoomData(newG.getZoom()));
+    setG6(newG);
+    if (resizeOb === null) {
+      const t = new ResizeObserver(() => {
+        const c = containerRef.current;
+        if (c) {
+          const rect = c.getBoundingClientRect();
+          newG.resize(rect.width, rect.height);
+        }
+      });
+      t.observe(containerRef.current!);
+      setResizeOb(t);
+    }
+    return () => {
+      newG.destroy();
+      resizeOb?.disconnect();
+    }
+  }, []);
+
+  useEffect(() => {
     if (mindData === null) {
-      if (g6 !== null) {
-        g6.destroy();
-        setG6(null);
-      }
+      g6?.setData({ nodes: [], edges: [] });
+      g6?.render();
     } else {
-      if (g6) {
-        g6.setData(mindData);
-        g6.render()
-          .then(() => g6.fitView())
-          .then(() => setZoomData(g6.getZoom()));
-      } else {
-        const newG = newGraph(mindData, rootIdData!);
-        newG
-          .render()
-          .then(() => newG.fitView())
-          .then(() => setZoomData(newG.getZoom()));
-        setG6(newG);
-      }
+      g6?.setData(mindData);
+      g6?.render()
+        .then(() => g6.fitView())
+        .then(() => setZoomData(g6.getZoom()));
     }
   }, [mindData]);
 
@@ -460,6 +490,14 @@ export const EduMindmap = forwardRef<IEduMindmap, EduMindmapProps>((props: EduMi
         position: 'relative',
       }}
     >
+      <div
+        ref={containerRef}
+        style={{
+          width: '100%',
+          height: '100%',
+          position: 'absolute',
+        }}
+      />
       {!props.isReadonly && !mindData && <>
         <div style={{
           width: '100%',
@@ -478,8 +516,8 @@ export const EduMindmap = forwardRef<IEduMindmap, EduMindmapProps>((props: EduMi
               file.text().then((text) => {
                 try {
                   const { graph, rootId } = deserializeMindmapData(text);
-                  setMindData(graph);
                   setRootIdData(rootId);
+                  setMindData(graph);
                 } catch (error) {
                   console.error(error);
                   message.error("无效的知识图谱数据");
@@ -500,15 +538,6 @@ export const EduMindmap = forwardRef<IEduMindmap, EduMindmapProps>((props: EduMi
           </Upload.Dragger>
         </div>
       </>}
-      {mindData && (
-        <div
-          ref={containerRef}
-          style={{
-            width: '100%',
-            height: '100%',
-          }}
-        />
-      )}
       {mindData && (
         <div
           style={{
@@ -600,8 +629,8 @@ export const EduMindmap = forwardRef<IEduMindmap, EduMindmapProps>((props: EduMi
       title={<><ExclamationCircleFilled /> 确认</>}
       open={isDeleteModal}
       onOk={() => {
-        setMindData(null);
         setRootIdData(null);
+        setMindData(null);
         setIsDeleteModal(false);
       }}
       onCancel={() => {
