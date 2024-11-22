@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { EduMindmap, EduMindmapGraph, IEduMindmap } from '../../components/Mindmap';
-import { Transformer } from 'markmap-lib';
+import { EduMindmap, EduMindmapGraph, EduMindmapVertex, IEduMindmap } from '../../components/Mindmap';
+import { builtInPlugins, Transformer } from 'markmap-lib';
 import { IPureNode } from 'markmap-common';
 import { basicSetup, EditorView } from "codemirror"
 import { markdown } from '@codemirror/lang-markdown';
@@ -16,10 +16,6 @@ interface ConvertNode {
   data: IPureNode;
   id: number;
 }
-
-const removeHtmlTags = (str: string) => {
-  return str.replace(/<\/?[^>]+(>|$)/g, "");
-};
 
 export default () => {
   const downloadMarkdown = (str: string, filename: string) => {
@@ -46,11 +42,12 @@ export default () => {
   }
 
   const updateMinmap = (value: string) => {
-    const transformer = new Transformer();
+    const transformer = new Transformer(builtInPlugins);
     const result = transformer.transform(value);
     if (isNullOrWhiteSpace(result.root.content) && result.root.children.length === 0) {
       return;
     }
+    console.log(result);
     const flat: ConvertNode[] = [];
     {
       const q: ConvertNode[] = [];
@@ -66,12 +63,22 @@ export default () => {
         flat.push(n);
       }
     }
+    const div = document.createElement('div');
     const graph: EduMindmapGraph = { verts: [], edges: [] };
-    for (const i of flat) {
-      graph.verts.push({ id: i.id.toString(), str: isNullOrWhiteSpace(i.data.content) ? undefined : removeHtmlTags(i.data.content.trim()) });
-      if (i.parent) {
-        graph.edges.push({ from: i.parent.id.toString(), to: i.id.toString() });
+    try {
+      for (const i of flat) {
+        const data: EduMindmapVertex = { id: i.id.toString(), str: undefined };
+        if (!isNullOrWhiteSpace(i.data.content)) {
+          div.innerHTML = i.data.content;
+          data.str = div.textContent ?? div.innerText;
+        }
+        graph.verts.push(data);
+        if (i.parent) {
+          graph.edges.push({ from: i.parent.id.toString(), to: i.id.toString() });
+        }
       }
+    } finally {
+      div.remove();
     }
     const mindJson = JSON.stringify(graph);
     mindmapRef.current!.setMindStringJson(mindJson);

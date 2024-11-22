@@ -12,5 +12,6 @@ export const layout = () => {
     menu: {
       locale: false,
     },
+    menuRender: false,
   };
 };

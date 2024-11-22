@@ -1,4 +1,12 @@
-import { DeleteOutlined, DownloadOutlined, ExclamationCircleFilled, InboxOutlined, MinusOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons';
+import {
+  DeleteOutlined,
+  DownloadOutlined,
+  ExclamationCircleFilled,
+  InboxOutlined,
+  MinusOutlined,
+  PlusOutlined,
+  ReloadOutlined
+} from '@ant-design/icons';
 import {
   EventListenerOrEventListenerObject,
   EventTarget,
@@ -192,6 +200,8 @@ export interface EduMindmapProps {
   mindJson?: string;
   isReadonly: boolean;
   exportName?: string;
+  onUploadJson?: (json: string) => Promise<boolean>;
+  onDeleteJson?: () => Promise<boolean>;
 }
 
 export interface IEduMindmap {
@@ -241,21 +251,21 @@ export const EduMindmap = forwardRef<IEduMindmap, EduMindmapProps>((props: EduMi
   const convertMindmapData = (data: EduMindmapGraph, isVerify?: boolean) => {
     if (isVerify) {
       if (data === null || typeof data !== 'object') {
-        throw new Error('invalid json');
+        throw new Error("无效的json, 根节点要 object 类型");
       }
       if (!data.verts || !data.edges) {
-        throw new Error("invalid json schema, need 'verts' and 'edges'");
+        throw new Error("无效的json, 根 object 内至少要有 'verts' 和 'edges' 字段");
       }
       const ids = new Set<string>();
       for (const i of data.verts) {
         if (ids.has(i.id)) {
-          throw new Error(`duplicate vertex id ${i.id}`);
+          throw new Error(`重复的顶点 id ${i.id}`);
         }
         ids.add(i.id);
       }
       for (const i of data.edges) {
         if (!ids.has(i.from) || !ids.has(i.to)) {
-          throw new Error(`unknown vertexs id ${i.from} ${i.to} in edge`);
+          throw new Error(`边连接了未知的顶点 ${i.from} ${i.to}`);
         }
       }
     }
@@ -278,7 +288,7 @@ export const EduMindmap = forwardRef<IEduMindmap, EduMindmapProps>((props: EduMi
     if (isVerify) {
       for (const i of treeData) {
         if (i.parent.length > 1) {
-          throw new Error(`tree node cannot has more than one parent ${i.id}`);
+          throw new Error(`树数据结构不可以有多个 parent ${i.id}`);
         }
       }
     }
@@ -290,11 +300,11 @@ export const EduMindmap = forwardRef<IEduMindmap, EduMindmapProps>((props: EduMi
     }
     if (isVerify) {
       if (root.length <= 0) {
-        throw new Error('must have one root');
+        throw new Error("至少要有一个根节点");
       }
       if (root.length > 1) {
         throw new Error(
-          `more than one root, roots id=${root.map((x) => x.id).join(',')}`,
+          `只能有一个根节点, 所有的根节点 id=${root.map((x) => x.id).join(',')}`,
         );
       }
     }
@@ -326,7 +336,7 @@ export const EduMindmap = forwardRef<IEduMindmap, EduMindmapProps>((props: EduMi
   const [resizeOb, setResizeOb] = useState<ResizeObserver | null>(null);
   const [mindData, setMindData] = useState<GraphData | null>(initMindData);
   const [rootIdData, setRootIdData] = useState<string | null>(initRootId);
-  const rootIdDataRef = useRef(rootIdData); // 乐 :)
+  const rootIdDataRef = useRef(rootIdData); // 乐 react 的诡异设计 :)
   useEffect(() => {
     rootIdDataRef.current = rootIdData
   }, [rootIdData]);
@@ -442,8 +452,10 @@ export const EduMindmap = forwardRef<IEduMindmap, EduMindmapProps>((props: EduMi
     }
   ));
 
-  // useEffect 第二个参数不填东西, 表示该side effect无依赖, 因此只在dom加载后执行一次 (这不就是 unity 生命周期 start 函数嘛
-  // 当 effect 有依赖时, 依赖发生变化后都会调用一次刷新side effect
+  // useEffect 第二个参数不填东西, 表示该 side effect 无依赖, 只在dom加载后执行一次 (这不就是 unity 生命周期 start 函数嘛
+  // 然后每帧调用返回的 callback (update 有了, 可以做游戏了 (不是
+  // 当第二个参数填空数组, 也是只在dom后执行一次, 但是返回的 callback 会在页面卸载时调用 (onDestroy 也有了
+  // 当有依赖时, 依赖发生变化后都会调用一次刷新 side effect
   useEffect(() => {
     const newG = newGraph(mindData ?? undefined);
     newG.render()
@@ -510,18 +522,19 @@ export const EduMindmap = forwardRef<IEduMindmap, EduMindmapProps>((props: EduMi
             multiple={false}
             showUploadList={false}
             accept=".json"
-            beforeUpload={(file) => {
-              file.text().then((text) => {
-                try {
-                  const { graph, rootId } = deserializeMindmapData(text);
+            beforeUpload={async (file) => {
+              try {
+                const text = await file.text();
+                const { graph, rootId } = deserializeMindmapData(text);
+                const isSucc = await props.onUploadJson?.(text) ?? true;
+                if (isSucc) {
                   setRootIdData(rootId);
                   setMindData(graph);
-                } catch (error) {
-                  console.error(error);
-                  message.error("无效的知识图谱数据");
-                  return;
                 }
-              });
+              } catch (error) {
+                console.error(error);
+                message.error("上传失败");
+              }
             }}
           >
             <p className="ant-upload-drag-icon">
@@ -626,10 +639,21 @@ export const EduMindmap = forwardRef<IEduMindmap, EduMindmapProps>((props: EduMi
     <Modal
       title={<><ExclamationCircleFilled /> 确认</>}
       open={isDeleteModal}
-      onOk={() => {
-        setRootIdData(null);
-        setMindData(null);
-        setIsDeleteModal(false);
+      onOk={async () => {
+        try {
+          const isSucc = await props.onDeleteJson?.() ?? true;
+          if (isSucc) {
+            setRootIdData(null);
+            setMindData(null);
+          }
+          setRootIdData(null);
+          setMindData(null);
+        } catch (error) {
+          console.error(error);
+          message.error("删除失败");
+        } finally {
+          setIsDeleteModal(false);
+        }
       }}
       onCancel={() => {
         setIsDeleteModal(false);
